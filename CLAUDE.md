@@ -4,7 +4,13 @@ A CLI that improves an LLM prompt stored as a mustache template: read `name.must
 through Anthropic's metaprompt — to rewrite it, write the result as `name.1.mustache`. The pipeline
 is one straight line in `improve()` (`cmd/metaprompt/main.go`): read the file → `ParseTags` →
 `Templates.BuildRequest` → one `llm.Generate` call → `ExtractInstructions` → `Tags.ToMustache` →
-`Tags.Verify` → `revision.NextPath` → write. There is no streaming, no tool loop, no config file.
+`Tags.Verify` → `revision.NextPath` → write. There is no tool loop and no config file.
+
+`llm.Generate` streams (`goai.StreamText`), and `Request.Stream` is where the live copy goes —
+`improve` points it at stdout, so the raw reply prints as it arrives while every other message stays
+on stderr. `-stdout` is the exception: it claims stdout for the finished template and passes a nil
+sink, because a live copy would corrupt `metaprompt -stdout foo.mustache > foo.1.mustache`. The
+sink is a `Request` field rather than an argument so the `generate` test seam keeps its signature.
 
 **`internal/metaprompt/metaprompt.mustache` is verbatim upstream text. Never edit, reformat, rewrap
 or "fix" it** — not its duplicated `Note:` line, not its missing trailing newline. It is the

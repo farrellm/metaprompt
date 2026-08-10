@@ -99,7 +99,7 @@ func run(args []string, stdout, stderr io.Writer) error {
 	fs.Float64Var(&opts.temperature, "temperature", -1, "sampling temperature; unset by default (Sonnet 5+ rejects 0)")
 	boolVar(&opts.dryRun, []string{"dry-run", "n"}, "print the request that would be sent and exit")
 	boolVar(&opts.verbose, []string{"verbose", "v"}, "print the full reply and token usage to stderr")
-	fs.BoolVar(&opts.stdout, "stdout", false, "write the result to stdout instead of a file")
+	fs.BoolVar(&opts.stdout, "stdout", false, "write the result to stdout instead of a file (silences the live reply)")
 	fs.BoolVar(&opts.noVerify, "no-verify", false, "downgrade variable-drift errors to warnings and write anyway")
 
 	if err := fs.Parse(args); err != nil {
@@ -146,13 +146,27 @@ func improve(path string, opts options, temperature *float64, stdout, stderr io.
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 
+	// The reply is printed as it arrives, except under -stdout: there stdout is
+	// the finished template's channel, and a live copy would corrupt a redirect.
+	// The request streams either way.
+	sink := stdout
+	if opts.stdout {
+		sink = nil
+	}
+
 	fmt.Fprintf(stderr, "improving %s with %s (%d variables)...\n", path, opts.model, len(tags.Vars))
 	res, err := generate(ctx, llm.Request{
 		Model:       opts.model,
 		Prompt:      request,
 		MaxTokens:   opts.maxTokens,
 		Temperature: temperature,
+		Stream:      sink,
 	})
+	// Replies rarely end in a newline; without one the next line written would
+	// continue the model's last.
+	if sink != nil && res.Text != "" && !strings.HasSuffix(res.Text, "\n") {
+		fmt.Fprintln(stdout)
+	}
 	if opts.verbose {
 		fmt.Fprintf(stderr, "\n--- reply ---\n%s\n--- end reply ---\n", res.Text)
 		fmt.Fprintf(stderr, "tokens: %d in, %d out\n", res.Usage.InputTokens, res.Usage.OutputTokens)

@@ -18,10 +18,17 @@ import (
 // needs a key, and that is the end-to-end run described in CLAUDE.md.
 
 // stubReply makes generate return reply, and restores the real one afterwards.
+// It honours Request.Stream the way the real one does, so the live output is
+// exercised through the same seam as everything else.
 func stubReply(t *testing.T, reply string) {
 	t.Helper()
 	real := generate
-	generate = func(context.Context, llm.Request) (llm.Result, error) {
+	generate = func(_ context.Context, req llm.Request) (llm.Result, error) {
+		if req.Stream != nil {
+			if _, err := io.WriteString(req.Stream, reply); err != nil {
+				return llm.Result{}, err
+			}
+		}
 		return llm.Result{Text: reply}, nil
 	}
 	t.Cleanup(func() { generate = real })
@@ -84,6 +91,34 @@ func TestImproveWritesNextRevision(t *testing.T) {
 	}
 }
 
+// The reply lands on stdout as it arrives — the whole reply, not the template
+// extracted from it, so there is something to watch during a slow rewrite.
+func TestStreamsReplyToStdout(t *testing.T) {
+	stubReply(t, goodReply)
+	dir := t.TempDir()
+	src := filepath.Join(dir, "reply.mustache")
+	write(t, src, "Answer {{QUESTION}} using {{&CONTEXT}}.\n")
+
+	var stdout, stderr bytes.Buffer
+	if err := run([]string{src}, &stdout, &stderr); err != nil {
+		t.Fatalf("run() error = %v (stderr: %s)", err, stderr.String())
+	}
+
+	got := stdout.String()
+	// The wrapper and the planning block are both trimmed out of the written
+	// template, so finding them proves this is the raw reply.
+	if !strings.Contains(got, "<Instructions>") || !strings.Contains(got, "Context first") {
+		t.Errorf("the full reply is not on stdout:\n%s", got)
+	}
+	if !strings.HasSuffix(got, "\n") {
+		t.Errorf("streamed reply does not end on its own line:\n%q", got)
+	}
+	// The progress and result lines stay on stderr, out of the reply's way.
+	if strings.Contains(got, "improving ") || strings.Contains(got, "wrote ") {
+		t.Errorf("stderr chatter leaked into stdout:\n%s", got)
+	}
+}
+
 // The sigil {{&CONTEXT}} is deliberate — it suppresses HTML escaping — so a
 // rewrite that quietly demotes it to {{CONTEXT}} is a compatibility break and
 // must not be written.
@@ -117,7 +152,8 @@ func TestImproveRejectsDrift(t *testing.T) {
 	}
 }
 
-// -stdout is for piping, so the result goes to stdout and nothing is written.
+// -stdout is for piping, so the result goes to stdout and nothing is written —
+// and the live reply is silenced, or it would corrupt the redirect.
 func TestImproveToStdout(t *testing.T) {
 	stubReply(t, goodReply)
 	dir := t.TempDir()
@@ -130,6 +166,9 @@ func TestImproveToStdout(t *testing.T) {
 	}
 	if !strings.Contains(stdout.String(), "{{&CONTEXT}}") {
 		t.Errorf("improved template not on stdout:\n%s", stdout.String())
+	}
+	if strings.Contains(stdout.String(), "<Instructions>") {
+		t.Errorf("the raw reply was streamed into -stdout's output:\n%s", stdout.String())
 	}
 	if entries, _ := os.ReadDir(dir); len(entries) != 1 {
 		t.Errorf("-stdout wrote files: %v", entries)

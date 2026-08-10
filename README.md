@@ -6,6 +6,11 @@ an improved next revision beside it, using Anthropic's metaprompt to do the rewr
 ```console
 $ metaprompt summarize.mustache
 improving summarize.mustache with claude-sonnet-5 (2 variables)...
+<Inputs>
+{$TRANSCRIPT}
+{$AUDIENCE}
+</Inputs>
+...                      # the reply, printed as the model writes it
 wrote summarize.1.mustache
 
 $ metaprompt -g "make it more concise" summarize.1.mustache
@@ -39,12 +44,17 @@ metaprompt [flags] <file.mustache>
   -o, -out string          write to this path instead of the next revision
   -n, -dry-run             print the request that would be sent and exit
   -v, -verbose             print the full reply and token usage to stderr
-      -stdout              write the result to stdout instead of a file
+      -stdout              write the result to stdout instead of a file (silences the live reply)
       -max-tokens int      output token limit (default 8192)
       -temperature float   sampling temperature; unset by default (Sonnet 5+ rejects 0)
       -prompts-dir string  directory of metaprompt/task/steering .mustache overrides
       -no-verify           downgrade variable-drift errors to warnings and write anyway
 ```
+
+The reply streams to stdout as the model writes it, so a slow rewrite is something to watch rather
+than a silent wait. Everything else — the progress line, warnings, `wrote <path>` — goes to stderr,
+so `metaprompt foo.mustache > reply.txt` keeps just the reply. The exception is `-stdout`, which
+claims stdout for the finished template and turns the live copy off.
 
 `-dry-run` costs nothing and prints the exact request that would be sent — the fastest way to see
 what the tool is actually asking for.
