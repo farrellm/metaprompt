@@ -72,7 +72,7 @@ func LoadTemplates(dir string) (Templates, error) {
 // interpolated values, which would turn the XML tags this whole prompt is built
 // from into &lt;…&gt;.
 func (tm Templates) BuildRequest(existing, guidance string, tags Tags) (string, error) {
-	taskCtx := map[string]any{"EXISTING": existing}
+	taskCtx := map[string]any{"EXISTING": strings.TrimSpace(existing)}
 	if guidance != "" {
 		taskCtx["GUIDANCE"] = guidance
 	}
