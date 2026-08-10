@@ -12,6 +12,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 
 	"github.com/zendev-sh/goai"
@@ -40,6 +41,10 @@ type Request struct {
 	Prompt      string
 	MaxTokens   int
 	Temperature *float64
+
+	// Stream, when non-nil, receives the reply text as it arrives. The request
+	// is streamed either way; this is only where the live copy goes.
+	Stream io.Writer
 }
 
 // Result is the model's reply plus what it cost.
@@ -48,9 +53,12 @@ type Result struct {
 	Usage provider.Usage
 }
 
-// Generate runs one non-streaming completion. The metaprompt is a single long
-// turn with no tools and one answer, so there is nothing here to stream and no
-// agentic loop to run.
+// Generate runs one completion, streaming it. The metaprompt is a single long
+// turn with no tools and one answer, so there is no agentic loop to run — but
+// writing that answer takes a while, and req.Stream lets the caller show it as
+// it comes rather than after. The returned Result is the whole reply either
+// way, and it is returned even alongside an error: by then some of it has
+// usually already been printed.
 func Generate(ctx context.Context, req Request) (Result, error) {
 	if os.Getenv(APIKeyEnv) == "" {
 		return Result{}, ErrNoAPIKey
@@ -64,12 +72,38 @@ func Generate(ctx context.Context, req Request) (Result, error) {
 		opts = append(opts, goai.WithTemperature(*req.Temperature))
 	}
 
-	res, err := goai.GenerateText(ctx, anthropic.Chat(req.Model), opts...)
+	ts, err := goai.StreamText(ctx, anthropic.Chat(req.Model), opts...)
 	if err != nil {
 		return Result{}, fmt.Errorf("generating with %s: %w", req.Model, err)
 	}
-	if res.FinishReason == provider.FinishLength {
-		return Result{Text: res.Text, Usage: res.TotalUsage}, ErrTruncated
+
+	// A stream has to be drained to the end or its consume goroutine leaks, so
+	// a failing sink stops the copying, not the reading. With no sink there is
+	// nothing to copy and Result drains it for us.
+	var writeErr error
+	if req.Stream != nil {
+		for chunk := range ts.TextStream() {
+			if writeErr != nil {
+				continue
+			}
+			if _, err := io.WriteString(req.Stream, chunk); err != nil {
+				writeErr = fmt.Errorf("writing the reply: %w", err)
+			}
+		}
 	}
-	return Result{Text: res.Text, Usage: res.TotalUsage}, nil
+
+	res := ts.Result()
+	out := Result{Text: res.Text, Usage: res.TotalUsage}
+	if writeErr != nil {
+		return out, writeErr
+	}
+	// Errors part-way through a stream arrive as chunks rather than from the
+	// call above, so this is the only place they surface.
+	if err := ts.Err(); err != nil {
+		return out, fmt.Errorf("generating with %s: %w", req.Model, err)
+	}
+	if res.FinishReason == provider.FinishLength {
+		return out, ErrTruncated
+	}
+	return out, nil
 }
