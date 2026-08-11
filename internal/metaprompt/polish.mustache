@@ -1,0 +1,41 @@
+Here is a prompt template one pass from finished, together with the brief drawn up from the prompt it replaces.
+
+<brief>
+{{{BRIEF}}}
+</brief>
+
+<draft>
+{{{DRAFT}}}
+</draft>
+
+Make a final editing pass. Change how the template reads, not what it asks for: every requirement in the brief survives this pass intact, and so does every placeholder.
+
+Look for:
+
+Instructions that say the same thing twice, or say it in two places.
+
+Vague wording where a specific instruction is available — a named format, a length, an audience, a definition of done.
+
+Structure that has drifted: sections out of order, or a constraint stated far from the part of the task it governs.
+
+Examples that no longer match the instructions around them.
+
+Anything a reader coming to this prompt cold would have to guess at.
+
+Leave text alone where it is already clear. A shorter template that still carries every requirement is better than a long one; a shorter template that has quietly lost a requirement is a failure.
+{{#DRIFT}}
+
+The draft's placeholders no longer match the original's:
+
+<drift>
+{{{DRIFT}}}
+</drift>
+
+Repair that. The revision has to render wherever the original renders today, so the placeholder set is fixed even where the wording around it changes.
+{{/DRIFT}}
+{{#GUIDANCE}}
+
+Keep following this guidance from the original request: {{{GUIDANCE}}}
+{{/GUIDANCE}}
+
+Return the finished template the way the draft was returned: an <Inputs> block listing the placeholders, then the full template in an <Instructions> block.

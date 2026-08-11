@@ -2,18 +2,35 @@ package metaprompt
 
 import (
 	"errors"
+	"fmt"
 	"regexp"
 	"strings"
+	"sync"
 )
 
 // The metaprompt answers with three blocks — <Inputs>, <Instructions Structure>
 // and <Instructions> — of which only the last is the prompt template. This is a
 // port of the extraction in metaprompt.ipynb cell 16.
 
-// instructionsRe captures the first <Instructions> block. <Instructions
-// Structure> deliberately does not match: the tag name is followed by a space,
-// not a '>'.
-var instructionsRe = regexp.MustCompile(`(?s)<Instructions>(.+?)</Instructions>`)
+// blockRes caches one compiled matcher per tag name. A matcher captures the first
+// block with that exact name: <Instructions Structure> deliberately does not
+// match <Instructions>, because the tag name there is followed by a space, not
+// a '>'.
+var (
+	blockResMu sync.Mutex
+	blockRes   = map[string]*regexp.Regexp{}
+)
+
+func blockRe(name string) *regexp.Regexp {
+	blockResMu.Lock()
+	defer blockResMu.Unlock()
+	re, ok := blockRes[name]
+	if !ok {
+		re = regexp.MustCompile(`(?s)<` + regexp.QuoteMeta(name) + `>(.+?)</` + regexp.QuoteMeta(name) + `>`)
+		blockRes[name] = re
+	}
+	return re
+}
 
 // emptyTagRe matches an empty tag pair at the end of the text. Go's RE2 has no
 // backreferences, so the two names are captured separately and compared in
@@ -26,16 +43,26 @@ var emptyTagRe = regexp.MustCompile(`(?s)<(\w+)></(\w+)>\n?$`)
 // was cut short.
 var ErrNoInstructions = errors.New("no <Instructions> block in the model's reply (re-run with -verbose to see it)")
 
-// ExtractInstructions pulls the prompt template out of a metaprompt reply.
+// ExtractInstructions pulls the prompt template out of a reply. Every step of
+// the chain that returns a template returns it this way.
+func ExtractInstructions(response string) (string, error) {
+	out, err := ExtractTag("Instructions", response)
+	if err != nil {
+		return "", ErrNoInstructions
+	}
+	return out, nil
+}
+
+// ExtractTag pulls the contents of the first <name> block out of a reply.
 //
 // The metaprompt is told to name opening tags without closing them, and models
 // often close them anyway, leaving an empty pair dangling at the end. The
 // double removal (with a trim between) is the notebook's, and clears the two
 // that a nested pair leaves behind.
-func ExtractInstructions(response string) (string, error) {
-	m := instructionsRe.FindStringSubmatch(response)
+func ExtractTag(name, response string) (string, error) {
+	m := blockRe(name).FindStringSubmatch(response)
 	if m == nil {
-		return "", ErrNoInstructions
+		return "", fmt.Errorf("no <%s> block in the model's reply (re-run with -verbose to see it)", name)
 	}
 	inner := removeEmptyTags(m[1])
 	return strings.TrimSpace(removeEmptyTags(strings.TrimSpace(inner))), nil

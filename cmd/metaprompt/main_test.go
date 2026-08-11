@@ -17,13 +17,30 @@ import (
 // stub it out through the generate seam. Only the request/response wire itself
 // needs a key, and that is the end-to-end run described in CLAUDE.md.
 
-// stubReply makes generate return reply, and restores the real one afterwards.
-// It honours Request.Stream the way the real one does, so the live output is
-// exercised through the same seam as everything else.
-func stubReply(t *testing.T, reply string) {
+// stub records the requests the chain made and hands back the scripted replies
+// in order. A test that scripts fewer replies than the run asks for fails,
+// rather than quietly feeding one canned answer to every step.
+type stub struct {
+	t        *testing.T
+	replies  []string
+	requests []llm.Request
+}
+
+// stubReplies makes successive generate calls return successive replies, and
+// restores the real one afterwards. It honours Request.Stream the way the real
+// one does, so the live output is exercised through the same seam as everything
+// else.
+func stubReplies(t *testing.T, replies ...string) *stub {
 	t.Helper()
+	s := &stub{t: t, replies: replies}
 	real := generate
 	generate = func(_ context.Context, req llm.Request) (llm.Result, error) {
+		s.requests = append(s.requests, req)
+		if len(s.requests) > len(s.replies) {
+			s.t.Errorf("generate called %d times, but only %d replies were scripted", len(s.requests), len(s.replies))
+			return llm.Result{}, errors.New("unscripted call")
+		}
+		reply := s.replies[len(s.requests)-1]
 		if req.Stream != nil {
 			if _, err := io.WriteString(req.Stream, reply); err != nil {
 				return llm.Result{}, err
@@ -32,6 +49,28 @@ func stubReply(t *testing.T, reply string) {
 		return llm.Result{Text: reply}, nil
 	}
 	t.Cleanup(func() { generate = real })
+	return s
+}
+
+// prompts returns the request text of every call made, in order.
+func (s *stub) prompts() []string {
+	out := make([]string, len(s.requests))
+	for i, r := range s.requests {
+		out[i] = r.Prompt
+	}
+	return out
+}
+
+// The analyze step's reply. Only the <brief> block survives into step 2.
+const briefReply = `Here is what I found.
+<brief>
+R1. Answer only from the supplied context.
+</brief>`
+
+// chainOf scripts one full run: the brief, then the same template back from
+// each of the three steps that return one.
+func chainOf(reply string) []string {
+	return []string{briefReply, reply, reply, reply}
 }
 
 // A well-formed reply, in the shape the metaprompt is asked to produce.
@@ -51,8 +90,12 @@ Write your answer in <answer> tags.
 <answer></answer>
 </Instructions>`
 
+// A reply that quietly drops {{&CONTEXT}}.
+const driftedReply = "<Instructions>\nAnswer {$QUESTION}. Ignore the context.\n</Instructions>"
+
 func TestImproveWritesNextRevision(t *testing.T) {
-	stubReply(t, goodReply)
+	// Two runs, four steps each.
+	stubReplies(t, append(chainOf(goodReply), chainOf(goodReply)...)...)
 	dir := t.TempDir()
 	src := filepath.Join(dir, "reply.mustache")
 	write(t, src, "Answer {{QUESTION}} using {{&CONTEXT}}.\n")
@@ -94,7 +137,7 @@ func TestImproveWritesNextRevision(t *testing.T) {
 // The reply lands on stdout as it arrives — the whole reply, not the template
 // extracted from it, so there is something to watch during a slow rewrite.
 func TestStreamsReplyToStdout(t *testing.T) {
-	stubReply(t, goodReply)
+	stubReplies(t, chainOf(goodReply)...)
 	dir := t.TempDir()
 	src := filepath.Join(dir, "reply.mustache")
 	write(t, src, "Answer {{QUESTION}} using {{&CONTEXT}}.\n")
@@ -121,9 +164,10 @@ func TestStreamsReplyToStdout(t *testing.T) {
 
 // The sigil {{&CONTEXT}} is deliberate — it suppresses HTML escaping — so a
 // rewrite that quietly demotes it to {{CONTEXT}} is a compatibility break and
-// must not be written.
+// must not be written. The chain gets two chances to put it back; when it
+// still hasn't by the last step, that is the end of the run.
 func TestImproveRejectsDrift(t *testing.T) {
-	stubReply(t, "<Instructions>\nAnswer {$QUESTION}. Ignore the context.\n</Instructions>")
+	stubReplies(t, append(chainOf(driftedReply), chainOf(driftedReply)...)...)
 	dir := t.TempDir()
 	src := filepath.Join(dir, "reply.mustache")
 	write(t, src, "Answer {{QUESTION}} using {{&CONTEXT}}.\n")
@@ -155,7 +199,7 @@ func TestImproveRejectsDrift(t *testing.T) {
 // -stdout is for piping, so the result goes to stdout and nothing is written —
 // and the live reply is silenced, or it would corrupt the redirect.
 func TestImproveToStdout(t *testing.T) {
-	stubReply(t, goodReply)
+	stubReplies(t, chainOf(goodReply)...)
 	dir := t.TempDir()
 	src := filepath.Join(dir, "reply.mustache")
 	write(t, src, "Answer {{QUESTION}} using {{&CONTEXT}}.\n")
@@ -172,6 +216,109 @@ func TestImproveToStdout(t *testing.T) {
 	}
 	if entries, _ := os.ReadDir(dir); len(entries) != 1 {
 		t.Errorf("-stdout wrote files: %v", entries)
+	}
+}
+
+// Each step is built out of the one before it. This is the chain's whole
+// premise, so it is checked link by link.
+func TestChainFeedsEachStepForward(t *testing.T) {
+	refined := strings.Replace(goodReply, "Context first, then the question.", "Refined.", 1)
+	polished := strings.Replace(goodReply, "Context first, then the question.", "Polished.", 1)
+	s := stubReplies(t, briefReply, goodReply, refined, polished)
+
+	dir := t.TempDir()
+	src := filepath.Join(dir, "reply.mustache")
+	write(t, src, "Answer {{QUESTION}} using {{&CONTEXT}}.\n")
+
+	var stderr bytes.Buffer
+	if err := run([]string{src}, io.Discard, &stderr); err != nil {
+		t.Fatalf("run() error = %v (stderr: %s)", err, stderr.String())
+	}
+
+	got := s.prompts()
+	if len(got) != 4 {
+		t.Fatalf("made %d calls, want 4 (stderr: %s)", len(got), stderr.String())
+	}
+	// 1: analyze sees the original and nothing else.
+	if !strings.Contains(got[0], "Answer {{QUESTION}} using {{&CONTEXT}}.") || strings.Contains(got[0], "Today you will be writing instructions") {
+		t.Error("the analyze step did not get the original prompt on its own")
+	}
+	// 2: draft is the metaprompt call, now carrying the brief.
+	if !strings.Contains(got[1], "Today you will be writing instructions") {
+		t.Error("the draft step is not the metaprompt call")
+	}
+	if !strings.Contains(got[1], "R1. Answer only from the supplied context.") {
+		t.Error("the brief did not reach the draft step")
+	}
+	if strings.Contains(got[1], "Here is what I found.") {
+		t.Error("the analyze reply went in unextracted, prose and all")
+	}
+	// 3 and 4: each review step sees the template the step before produced.
+	if !strings.Contains(got[2], "Here is the context:") || strings.Contains(got[2], "Refined.") {
+		t.Error("the refine step did not get the draft's template")
+	}
+	if !strings.Contains(got[3], "Here is the context:") {
+		t.Error("the polish step did not get the refine step's template")
+	}
+	// The written file is the last step's work, not the first's.
+	if strings.Contains(read(t, filepath.Join(dir, "reply.1.mustache")), "Polished.") {
+		t.Error("the planning block was not trimmed out of the final step")
+	}
+	// Progress is numbered so a slow run says where it is.
+	if !strings.Contains(stderr.String(), "step 4/4 polish:") {
+		t.Errorf("steps are not numbered on stderr:\n%s", stderr.String())
+	}
+}
+
+// -single is the escape hatch back to one call, for a cheap pass.
+func TestSingleMakesOneCall(t *testing.T) {
+	s := stubReplies(t, goodReply)
+	dir := t.TempDir()
+	src := filepath.Join(dir, "reply.mustache")
+	write(t, src, "Answer {{QUESTION}} using {{&CONTEXT}}.\n")
+
+	var stderr bytes.Buffer
+	if err := run([]string{"-single", src}, io.Discard, &stderr); err != nil {
+		t.Fatalf("run() error = %v (stderr: %s)", err, stderr.String())
+	}
+	if len(s.requests) != 1 {
+		t.Fatalf("-single made %d calls, want 1", len(s.requests))
+	}
+	if !strings.Contains(s.requests[0].Prompt, "Today you will be writing instructions") {
+		t.Error("-single did not make the metaprompt call")
+	}
+	if strings.Contains(s.requests[0].Prompt, "<brief>") {
+		t.Error("-single sent a brief it never asked for")
+	}
+	if _, err := os.Stat(filepath.Join(dir, "reply.1.mustache")); err != nil {
+		t.Errorf("-single wrote nothing: %v", err)
+	}
+}
+
+// Drift used to end the run. Now it is handed to the next step to repair, and
+// only the last step's drift is fatal.
+func TestDriftIsHandedForwardForRepair(t *testing.T) {
+	s := stubReplies(t, briefReply, driftedReply, goodReply, goodReply)
+	dir := t.TempDir()
+	src := filepath.Join(dir, "reply.mustache")
+	write(t, src, "Answer {{QUESTION}} using {{&CONTEXT}}.\n")
+
+	var stderr bytes.Buffer
+	if err := run([]string{src}, io.Discard, &stderr); err != nil {
+		t.Fatalf("run() error = %v (stderr: %s)", err, stderr.String())
+	}
+
+	got := s.prompts()
+	// The refine step is told exactly what the draft lost.
+	if !strings.Contains(got[2], "<drift>") || !strings.Contains(got[2], "dropped {{&CONTEXT}}") {
+		t.Errorf("the refine step was not told about the drift:\n%s", got[2])
+	}
+	// The polish step, handed a repaired template, has nothing to repair.
+	if strings.Contains(got[3], "<drift>") {
+		t.Error("the polish step was told about drift that had already been fixed")
+	}
+	if !strings.Contains(read(t, filepath.Join(dir, "reply.1.mustache")), "{{&CONTEXT}}") {
+		t.Error("the repaired template was not written")
 	}
 }
 
@@ -192,9 +339,35 @@ func TestDryRun(t *testing.T) {
 	if !strings.Contains(req, "no others: {$CONTEXT}, {$QUESTION}.") {
 		t.Error("the steering does not pin the prompt's variables")
 	}
+	// Every step is shown, in order.
+	for _, want := range []string{"=== step 1/4 analyze ===", "=== step 2/4 draft", "=== step 3/4 refine", "=== step 4/4 polish"} {
+		if !strings.Contains(req, want) {
+			t.Errorf("dry run is missing %q", want)
+		}
+	}
+	// Steps 2-4 quote outputs that do not exist yet, and say so rather than
+	// pretending the request is what would really be sent.
+	if !strings.Contains(req, "«output of step 1 (analyze) goes here»") {
+		t.Error("unknown upstream output is not marked as a placeholder")
+	}
+	if !strings.Contains(req, "upstream output shown as a placeholder") {
+		t.Error("the placeholder steps are not labelled")
+	}
 	// A dry run must not write anything.
 	if entries, _ := os.ReadDir(dir); len(entries) != 1 {
 		t.Errorf("dry run wrote files: %v", entries)
+	}
+
+	// -single prints the one request it would send, with no chain scaffolding.
+	var single bytes.Buffer
+	if err := run([]string{"-n", "-single", src}, &single, &stderr); err != nil {
+		t.Fatalf("run(-n -single) error = %v", err)
+	}
+	if strings.Contains(single.String(), "=== step") || strings.Contains(single.String(), "«output") {
+		t.Errorf("-n -single printed chain scaffolding:\n%s", single.String())
+	}
+	if !strings.Contains(single.String(), "Today you will be writing instructions") {
+		t.Error("-n -single did not print the metaprompt call")
 	}
 }
 
