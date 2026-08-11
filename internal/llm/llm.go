@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 
 	"github.com/zendev-sh/goai"
 	"github.com/zendev-sh/goai/provider"
@@ -36,6 +37,10 @@ var ErrTruncated = errors.New("the model hit the output token limit before finis
 // Request is one generation. Temperature is a pointer because "unset" and
 // "zero" are different requests: Claude Sonnet 5 and later reject temperature=0
 // outright, so the parameter is only sent when explicitly asked for.
+//
+// There is deliberately no thinking or effort parameter. Whether the model
+// reasons before answering, and for how long, is left to the model's own
+// default — the same reason there is no fixed model list here.
 type Request struct {
 	Model       string
 	Prompt      string
@@ -47,10 +52,12 @@ type Request struct {
 	Stream io.Writer
 }
 
-// Result is the model's reply plus what it cost.
+// Result is the model's reply plus what it cost. Reasoning is the thinking
+// text, which is kept out of Text — see Generate.
 type Result struct {
-	Text  string
-	Usage provider.Usage
+	Text      string
+	Reasoning string
+	Usage     provider.Usage
 }
 
 // Generate runs one completion, streaming it. The metaprompt is a single long
@@ -63,7 +70,6 @@ func Generate(ctx context.Context, req Request) (Result, error) {
 	if os.Getenv(APIKeyEnv) == "" {
 		return Result{}, ErrNoAPIKey
 	}
-
 	opts := []goai.Option{
 		goai.WithPrompt(req.Prompt),
 		goai.WithMaxOutputTokens(req.MaxTokens),
@@ -93,7 +99,7 @@ func Generate(ctx context.Context, req Request) (Result, error) {
 	}
 
 	res := ts.Result()
-	out := Result{Text: res.Text, Usage: res.TotalUsage}
+	out := Result{Text: replyText(res), Reasoning: res.Reasoning, Usage: res.TotalUsage}
 	if writeErr != nil {
 		return out, writeErr
 	}
@@ -106,4 +112,25 @@ func Generate(ctx context.Context, req Request) (Result, error) {
 		return out, ErrTruncated
 	}
 	return out, nil
+}
+
+// replyText returns the reply with the thinking left out.
+//
+// GoAI folds reasoning chunks into TextResult.Text for streaming calls, for
+// backward compatibility — so whenever the model reasons before answering,
+// res.Text is the thinking and the answer run together, and the <Instructions>
+// extraction would be reading both. Nothing here asks the model to think, but
+// models that do so by default make this the normal case rather than the
+// exceptional one. The per-step text excludes it. There are no tools here, so
+// there is exactly one step; the loop is for the empty-reply case, where Steps
+// is nil and res.Text is all there is (and holds no reasoning either).
+func replyText(res *goai.TextResult) string {
+	var b strings.Builder
+	for _, s := range res.Steps {
+		b.WriteString(s.Text)
+	}
+	if len(res.Steps) == 0 {
+		return res.Text
+	}
+	return b.String()
 }

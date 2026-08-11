@@ -1,0 +1,9 @@
+The prompt you produce will be run by a model with extended thinking enabled, which reasons on its own before it answers. Write it for that model:
+
+Let that thinking do the reasoning. Where the draft asks for a scratchpad, a thinking block, a brainstorming section, or tells the model to reason step by step or plan before answering, drop it and keep only the instruction about what the answer itself must contain. A prompt that asks for reasoning as well gets it twice: once in the thinking, once padding the answer.
+
+Steer the reasoning by naming what to weigh rather than prescribing the steps. "Consider how each option affects {$AUDIENCE} before choosing" earns its place; "first do this, then do that, then conclude" takes room away from reasoning the model does better unprompted.
+
+Bring every example in the prompt into line with the instructions you settle on. An example that works through its reasoning before answering, or that shows a format the instructions no longer ask for, teaches the model to ignore those instructions — a demonstration outweighs a description. Rewrite each example so it shows exactly the output the instructions call for.
+
+Ask for one output block, name it, and tell the model to start its answer with it. Prefilling the response is unavailable, so that instruction carries the whole format on its own.

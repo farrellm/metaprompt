@@ -1,0 +1,27 @@
+A prompt template has been rewritten from scratch. Correct the rewrite against the brief drawn up from the prompt it replaces, so that it is safe to swap in.
+
+<brief>
+{{{BRIEF}}}
+</brief>
+
+<draft>
+{{{DRAFT}}}
+</draft>
+
+Take the brief's numbered requirements one at a time and confirm the draft still carries each one. Restore any the draft dropped, weakened, or quietly changed the meaning of. Where the draft is already an improvement on what the brief describes, keep its structure and its wording — this is a correction pass, not a second rewrite.
+{{#DRIFT}}
+
+The draft's placeholders no longer match the original's:
+
+<drift>
+{{{DRIFT}}}
+</drift>
+
+Repair that. The revision has to render wherever the original renders today, so the placeholder set is fixed even where the wording around it changes.
+{{/DRIFT}}
+{{#GUIDANCE}}
+
+Keep following this guidance from the original request: {{{GUIDANCE}}}
+{{/GUIDANCE}}
+
+Return the corrected template the way the draft was returned: an <Inputs> block listing the placeholders, then the full template in an <Instructions> block.
