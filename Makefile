@@ -1,11 +1,15 @@
 BIN := bin/metaprompt
 
-.PHONY: build test check fmt vet clean
+.PHONY: build install test check fmt vet dry-run clean
 
 build: $(BIN)
 
 $(BIN): $(shell find . -name '*.go' -o -name '*.mustache')
 	go build -o $(BIN) ./cmd/metaprompt
+
+# Put metaprompt on $PATH (GOBIN, else $(go env GOPATH)/bin).
+install:
+	go install ./cmd/metaprompt
 
 test:
 	go test ./...
