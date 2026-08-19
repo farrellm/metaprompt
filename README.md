@@ -37,6 +37,15 @@ across revisions.
 go install github.com/farrellm/metaprompt/cmd/metaprompt@latest
 ```
 
+Or from a clone, which installs the same binary to the same place:
+
+```console
+make install
+```
+
+Both put `metaprompt` in `$GOBIN`, or `$(go env GOPATH)/bin` if that is unset; make sure it is on
+your `$PATH`. `make build` instead leaves the binary in `bin/` without installing it.
+
 Set `ANTHROPIC_API_KEY` in your environment. Go 1.25 or later.
 
 ## Usage
