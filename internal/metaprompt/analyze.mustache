@@ -8,14 +8,18 @@ Write a brief that the rewriting steps will work from. The rewrite is free to ch
 
 Cover, in this order:
 
-Task — one or two sentences on what this prompt asks a model to do, and what a good response to it looks like.
+Task — one or two sentences on what this prompt asks a model to do, and what a good response to it looks like. Add what the prompt reveals about where it sits: who or what fills its placeholders, and what consumes the answer. Mark anything you are inferring as an inference.
 
-Requirements — every requirement and constraint the prompt expresses, one per line, numbered R1, R2, and so on. Include the ones it only implies: an output format its wording takes for granted, a tone, a length, an audience, something it rules out. Where the prompt is ambiguous, say so and give the reading you think was intended. Later steps treat this list as settled, so a flagged uncertainty is worth far more than a confident guess.
+Requirements — every requirement and constraint the prompt expresses, one per line, numbered R1, R2, and so on. Include the ones it only implies: an output format its wording takes for granted, a tone, a length, an audience, something it rules out. Where the prompt is ambiguous, say so and give the reading you think was intended. Keep this list to what the prompt actually demands — what it leaves open belongs under Open decisions. Later steps treat this list as settled, so a flagged uncertainty is worth far more than a confident guess.
 
-Inputs — each placeholder, in the {$NAME} form, what it holds, and where the prompt uses it.
+Inputs — each placeholder, in the {$NAME} form, what it holds, and where the prompt uses it. Say what shape its value takes: a short phrase that reads inline, or a block of supplied material that needs delimiting and belongs near the top of the prompt.
 
 Examples — each worked example the prompt contains, what it demonstrates, and whether it is there to fix an output format, a style, or an edge case. Write "none" if the prompt has no examples.
 
-Weaknesses — what is unclear, redundant, contradictory, or likely to produce inconsistent results, each with the specific text at fault.
+Weaknesses — what in the prompt as written is unclear, redundant, contradictory, or likely to produce inconsistent results, each with the specific text at fault. What the prompt never says at all belongs under Open decisions instead.
+
+Open decisions — what the prompt leaves unsettled that the rewrite will have to settle: a format it never names, a length it never bounds, an audience it never identifies, a definition of done it never gives. For each, say what is missing and what a sensible default would be. These are choices, not requirements — a later step must not treat one as something to preserve.
+
+Judgment — where this task asks the answering model to weigh something rather than follow a rule: what pulls against what, and where answers to this prompt are most likely to go wrong. Name what is worth weighing. Do not prescribe an order to weigh it in, and do not propose a scratchpad, a planning section or a step-by-step procedure — the rewritten prompt is for a model that reasons on its own before it answers.
 
 Put the whole brief in a single <brief> block and start your response with it.
